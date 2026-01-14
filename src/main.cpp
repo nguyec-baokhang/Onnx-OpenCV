@@ -56,8 +56,7 @@ void ClipBox(cv::Rect &box, const cv::Size &shape){
   box.height = std::max(0, std::min(box.height, shape.height - box.y));
 }
 
-cv::Mat LoadImage(const std::string &imagePath){
-  cv::Mat image = cv::imread(imagePath);
+cv::Mat ImageToBlob(const cv::Mat &image){
   cv::Mat padded_image;
   padded_image = LetterBox(image,cv::Size(640,640));
   return cv::dnn::blobFromImage(
@@ -111,11 +110,6 @@ void ScaleYoloBox(YoloBoundingBox &box, const cv::Size &original_shape){
   box.bounding_box.width /= scale_ratio;
   box.bounding_box.height /= scale_ratio;
   ClipBox(box.bounding_box, original_shape);
-
-  std::cout << "Scaled box: x=" << box.bounding_box.x
-          << " y=" << box.bounding_box.y
-          << " w=" << box.bounding_box.width
-          << " h=" << box.bounding_box.height << std::endl;
 }
 
 std::vector<YoloBoundingBox> ProcessYoloOutputs(const cv::Mat &raw_boxes, const cv::Size &original_shape){
@@ -173,11 +167,20 @@ int main(){
   const std::string modelPath = "../models/yolo11n.onnx";
   const std::string imagePath = "../images/image1.jpg";
   const std::string labelsPath = "../labels/coco.txt";
+  std::string videoPath = "../videos/tennis.mp4";
+  
+  cv::VideoCapture video(videoPath);
+  cv::Mat image; 
+  if (!video.isOpened()) {
+    std::cerr << "Error: Could not open video file: " << videoPath << std::endl;
+    return -1;
+  } 
 
   Ort::Session yolo_model_session = LoadYoloModel(env,modelPath);
-  cv::Mat image = cv::imread(imagePath);  
-  cv::Mat blob = LoadImage(imagePath);
-  Ort::Value input_tensor = BlobToOnnxTensor(blob);
+  // Single image processing
+  // cv::Mat image = cv::imread(imagePath);  
+  // cv::Mat blob = ImageToBlob(image);
+  // Ort::Value input_tensor = BlobToOnnxTensor(blob);
 
   // Inferencing 
   Ort::AllocatorWithDefaultOptions allocator;
@@ -186,37 +189,49 @@ int main(){
   const char* input_names[] = {input_name.c_str()};
   const char* output_names[] = {output_name.c_str()};
 
-  std::vector<Ort::Value> output = yolo_model_session.Run(
-    Ort::RunOptions{nullptr},
-    input_names,
-    &input_tensor,
-    1,
-    output_names,
-    1
-  );
-
-  cv::Mat raw_boxes = getYoloBox(output);
-  std::vector<YoloBoundingBox> filtered_boxes = ProcessYoloOutputs(raw_boxes, image.size());
-
   std::vector<std::string> labels = LoadLabels(labelsPath);
-  for (auto &box: filtered_boxes) {
-    std::string label = labels[box.class_id];
-    // Draw bounding box
-    cv::rectangle(image, box.bounding_box, cv::Scalar(0, 255, 0), 2);
-    // Draw label background
-    int baseLine = 0;
-    cv::Size labelSize = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseLine);
-    int top = std::max(box.bounding_box.y, labelSize.height);
-    cv::rectangle(image, cv::Point(box.bounding_box.x, top - labelSize.height - 5),
-                 cv::Point(box.bounding_box.x + labelSize.width, top + baseLine - 5),
-                 cv::Scalar(0, 255, 0), cv::FILLED);
-    // Draw label text with confidence
-    char label_text[128];
-    snprintf(label_text, sizeof(label_text), "%s: %.2f", label.c_str(), box.confidence);
-    cv::putText(image, label_text, cv::Point(box.bounding_box.x, top - 2),
-                cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0,0,0), 1);
+
+  while(true){
+    video >> image; 
+    cv::Mat blob = ImageToBlob(image);
+    Ort::Value input_tensor = BlobToOnnxTensor(blob);
+    std::vector<Ort::Value> output = yolo_model_session.Run(
+      Ort::RunOptions{nullptr},
+      input_names,
+      &input_tensor,
+      1,
+      output_names,
+      1
+    );
+
+    cv::Mat raw_boxes = getYoloBox(output);
+    std::vector<YoloBoundingBox> filtered_boxes = ProcessYoloOutputs(raw_boxes, image.size());
+
+    for (auto &box: filtered_boxes) {
+      std::string label = labels[box.class_id];
+      // Draw bounding box
+      cv::rectangle(image, box.bounding_box, cv::Scalar(0, 255, 0), 2);
+      // Draw label background
+      int baseLine = 0;
+      cv::Size labelSize = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseLine);
+      int top = std::max(box.bounding_box.y, labelSize.height);
+      cv::rectangle(image, cv::Point(box.bounding_box.x, top - labelSize.height - 5),
+                  cv::Point(box.bounding_box.x + labelSize.width, top + baseLine - 5),
+                  cv::Scalar(0, 255, 0), cv::FILLED);
+      // Draw label text with confidence
+      char label_text[128];
+      snprintf(label_text, sizeof(label_text), "%s: %.2f", label.c_str(), box.confidence);
+      cv::putText(image, label_text, cv::Point(box.bounding_box.x, top - 2),
+                  cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0,0,0), 1);
+    }
+    cv::imshow("Test Image", image);
+    int key = cv::waitKey(1000 / 120);
+    if(key==27){
+      break;
+    }
   }
-  cv::imshow("Test Image", image);
-  cv::waitKey(0);
+
+  cv::destroyAllWindows();
+  video.release();
   return 0;
 }
