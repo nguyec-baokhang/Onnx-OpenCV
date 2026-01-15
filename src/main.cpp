@@ -13,6 +13,7 @@ std::vector<std::string> LoadLabels(const std::string labelsPath){
   return labels;
 }
 
+
 struct YoloBoundingBox{
   cv::Rect bounding_box;
   double confidence;
@@ -107,6 +108,8 @@ void ScaleYoloBox(YoloBoundingBox &box, const cv::Size &original_shape){
   float letterbox_padding_y = (yolo_shape.height - new_unpad_h) / 2;
   box.bounding_box.x -= letterbox_padding_x; 
   box.bounding_box.y -= letterbox_padding_y; 
+  box.bounding_box.x /= scale_ratio;
+  box.bounding_box.y /= scale_ratio;
   box.bounding_box.width /= scale_ratio;
   box.bounding_box.height /= scale_ratio;
   ClipBox(box.bounding_box, original_shape);
@@ -193,6 +196,9 @@ int main(){
 
   while(true){
     video >> image; 
+    if(image.empty()){
+      break;
+    }
     cv::Mat blob = ImageToBlob(image);
     Ort::Value input_tensor = BlobToOnnxTensor(blob);
     std::vector<Ort::Value> output = yolo_model_session.Run(
