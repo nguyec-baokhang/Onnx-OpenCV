@@ -2,17 +2,10 @@
 #include <opencv2/opencv.hpp>
 #include <fstream> 
 
-
-std::vector<std::string> LoadLabels(const std::string labelsPath){
-  std::vector<std::string> labels;
-  std::string label;
-  std::ifstream coco(labelsPath);
-  while (std::getline(coco,label)){
-    labels.push_back(label);
-  }
-  return labels;
-}
-
+bool selectObj = false; 
+int trackedObj = 0; 
+cv::Rect selection; 
+cv::Mat image;
 
 struct YoloBoundingBox{
   cv::Rect bounding_box;
@@ -165,15 +158,87 @@ std::vector<YoloBoundingBox> ProcessYoloOutputs(const cv::Mat &raw_boxes, const 
   return filtered_boxes;
 }
 
+void onMouse(int event ,int x, int y, int flag, void*){
+  static cv::Point origin;
+  if(selectObj){
+    selection.x = std::min(x,origin.x);
+    selection.y = std::min(y,origin.y);
+    selection.width = std::abs(x-origin.x);
+    selection.height = std::abs(y-origin.y);
+
+    selection &= cv::Rect(0, 0, image.cols, image.rows);
+  }
+
+  switch(event){
+    case cv::EVENT_LBUTTONDOWN: 
+      origin = cv::Point(x,y);
+      selection = cv::Rect(0, 0, x, y);
+      selectObj = true;
+      break;
+    case cv::EVENT_LBUTTONUP: 
+      selectObj = false;
+      if(selection.width > 0 && selection.height > 0){
+        trackedObj = -1; // tracked object has not calculated Camshift
+      }
+      break;
+
+  }
+}
+
+double computeIoU(const cv::Rect &box, const cv::Rect &focusedBox){
+  int intersectionArea = (focusedBox & box).area();
+  int unionArea = focusedBox.area() + box.area() - intersectionArea;
+  return unionArea > 0 ?  static_cast<double>(intersectionArea) / unionArea : 0.0;
+}
+
+std::vector<std::string> LoadLabels(const std::string labelsPath){
+  std::vector<std::string> labels;
+  std::string label;
+  std::ifstream coco(labelsPath);
+  while (std::getline(coco,label)){
+    labels.push_back(label);
+  }
+  return labels;
+}
+
+void drawing(const std::vector<YoloBoundingBox> &boxes, cv::Mat &frame, const std::vector<std::string> &labels){
+  for(const auto &box: boxes) {
+    std::string label = labels[box.class_id];
+    // Draw bounding box
+    cv::rectangle(frame, box.bounding_box, cv::Scalar(0, 255, 0), 2);
+    // Draw label background
+    int baseLine = 0;
+    cv::Size labelSize = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseLine);
+    int top = std::max(box.bounding_box.y, labelSize.height);
+    cv::rectangle(frame, cv::Point(box.bounding_box.x, top - labelSize.height - 5),
+                cv::Point(box.bounding_box.x + labelSize.width, top + baseLine - 5),
+                cv::Scalar(0, 255, 0), cv::FILLED);
+    // Draw label text with confidence
+    char label_text[128];
+    snprintf(label_text, sizeof(label_text), "%s: %.2f", label.c_str(), box.confidence);
+    cv::putText(frame, label_text, cv::Point(box.bounding_box.x, top - 2),
+                cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0,0,0), 1);
+  }
+}
+
+
 int main(){
   const Ort::Env env(ORT_LOGGING_LEVEL_ERROR,"YOLO");
   const std::string modelPath = "../models/yolo11n.onnx";
   const std::string imagePath = "../images/image1.jpg";
   const std::string labelsPath = "../labels/coco.txt";
   std::string videoPath = "../videos/tennis.mp4";
+
+  const float overlapedThreshold{0.3};
+  cv::Mat frame;
+  cv::Mat hsv, hue, mask, hist, backproj;
+  cv::Rect trackedWindow;             // tracking window
+  int hsize = 16;                   // for histogram
+  float hranges[] = {0,180};        // for histogram
+  const float* phranges = hranges;  // for histogram
+  cv::RotatedRect trackedBox;
   
-  cv::VideoCapture video(videoPath);
-  cv::Mat image; 
+  cv::VideoCapture video(videoPath); 
   if (!video.isOpened()) {
     std::cerr << "Error: Could not open video file: " << videoPath << std::endl;
     return -1;
@@ -194,12 +259,39 @@ int main(){
 
   std::vector<std::string> labels = LoadLabels(labelsPath);
 
+  cv::namedWindow("Computer Vision");
   while(true){
-    video >> image; 
-    if(image.empty()){
+    video >> frame; 
+    if(frame.empty()){
       break;
     }
-    cv::Mat blob = ImageToBlob(image);
+    frame.copyTo(image);
+    cv::setMouseCallback("Computer Vision",onMouse, NULL);
+    cv::cvtColor(image,hsv, cv::COLOR_BGR2HSV);
+
+    if(trackedObj){
+      cv::inRange(hsv,cv::Scalar(0,30,10),cv::Scalar(180,256,10),mask);
+      int ch[] = {0,0};
+      hue.create(hsv.size(), hsv.depth());
+      cv::mixChannels(&hsv,1,&hue,1,ch,1);
+      if(trackedObj < 0){
+        // Setup chanel h and mask ROI
+        cv::Mat roi(hue,selection),maskroi(mask,selection);
+        // Calculate ROI histogram
+        calcHist(&roi,1,0,maskroi,hist,1,&hsize,&phranges);
+        // Normalization of histogram 
+        normalize(hist, hist, 0, 255, cv::NORM_MINMAX);
+
+        trackedWindow = selection; 
+        trackedObj = 1;
+      }
+      // Backproject histogram
+      calcBackProject(&hue, 1, 0, hist, backproj, &phranges);
+      backproj &= mask;
+      trackedBox = CamShift(backproj, trackedWindow, cv::TermCriteria(cv::TermCriteria::EPS | cv::TermCriteria::MAX_ITER , 10, 1 ));
+    }
+
+    cv::Mat blob = ImageToBlob(frame);
     Ort::Value input_tensor = BlobToOnnxTensor(blob);
     std::vector<Ort::Value> output = yolo_model_session.Run(
       Ort::RunOptions{nullptr},
@@ -211,26 +303,22 @@ int main(){
     );
 
     cv::Mat raw_boxes = getYoloBox(output);
-    std::vector<YoloBoundingBox> filtered_boxes = ProcessYoloOutputs(raw_boxes, image.size());
+    std::vector<YoloBoundingBox> filtered_boxes = ProcessYoloOutputs(raw_boxes, frame.size());
 
-    for (auto &box: filtered_boxes) {
-      std::string label = labels[box.class_id];
-      // Draw bounding box
-      cv::rectangle(image, box.bounding_box, cv::Scalar(0, 255, 0), 2);
-      // Draw label background
-      int baseLine = 0;
-      cv::Size labelSize = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseLine);
-      int top = std::max(box.bounding_box.y, labelSize.height);
-      cv::rectangle(image, cv::Point(box.bounding_box.x, top - labelSize.height - 5),
-                  cv::Point(box.bounding_box.x + labelSize.width, top + baseLine - 5),
-                  cv::Scalar(0, 255, 0), cv::FILLED);
-      // Draw label text with confidence
-      char label_text[128];
-      snprintf(label_text, sizeof(label_text), "%s: %.2f", label.c_str(), box.confidence);
-      cv::putText(image, label_text, cv::Point(box.bounding_box.x, top - 2),
-                  cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0,0,0), 1);
+    if(trackedObj > 0){
+      std::vector<YoloBoundingBox> focused_boxes;
+      cv::Rect focusedBox = trackedBox.boundingRect();
+      for(const auto &box : filtered_boxes){
+        if(computeIoU(box.bounding_box, focusedBox) > overlapedThreshold){
+          focused_boxes.push_back(box);
+        }
+      }
+      drawing(focused_boxes, frame, labels);
+    } else {
+      drawing(filtered_boxes, frame, labels);
     }
-    cv::imshow("Test Image", image);
+    cv::imshow("Computer Vision", frame);
+    retangle(frame,trackedBox)
     int key = cv::waitKey(1000 / 120);
     if(key==27){
       break;
