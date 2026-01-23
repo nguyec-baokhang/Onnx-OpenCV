@@ -172,8 +172,17 @@ void onMouse(int event ,int x, int y, int flag, void*){
   switch(event){
     case cv::EVENT_LBUTTONDOWN: 
       origin = cv::Point(x,y);
-      selection = cv::Rect(0, 0, x, y);
+      selection = cv::Rect(x,y,0,0);
       selectObj = true;
+      break;
+    case cv::EVENT_MOUSEMOVE:
+      if (selectObj) {
+          selection.x = std::min(x, origin.x);
+          selection.y = std::min(y, origin.y);
+          selection.width = std::abs(x - origin.x);
+          selection.height = std::abs(y - origin.y);
+          selection &= cv::Rect(0, 0, image.cols, image.rows);
+      }
       break;
     case cv::EVENT_LBUTTONUP: 
       selectObj = false;
@@ -183,12 +192,6 @@ void onMouse(int event ,int x, int y, int flag, void*){
       break;
 
   }
-}
-
-double computeIoU(const cv::Rect &box, const cv::Rect &focusedBox){
-  int intersectionArea = (focusedBox & box).area();
-  int unionArea = focusedBox.area() + box.area() - intersectionArea;
-  return unionArea > 0 ?  static_cast<double>(intersectionArea) / unionArea : 0.0;
 }
 
 std::vector<std::string> LoadLabels(const std::string labelsPath){
@@ -201,18 +204,39 @@ std::vector<std::string> LoadLabels(const std::string labelsPath){
   return labels;
 }
 
-void drawing(const std::vector<YoloBoundingBox> &boxes, cv::Mat &frame, const std::vector<std::string> &labels){
-  for(const auto &box: boxes) {
+// Compute IoU between two rectangles
+double computeIoU(const cv::Rect &a, const cv::Rect &b) {
+    int intersectionArea = (a & b).area();
+    int unionArea = a.area() + b.area() - intersectionArea;
+    return unionArea > 0 ? static_cast<double>(intersectionArea) / unionArea : 0.0;
+}
+
+void drawing(const std::vector<YoloBoundingBox> &boxes, cv::Mat &frame, const std::vector<std::string> &labels, const cv::Rect* focusedBox = nullptr){
+  int highlightIdx = -1;
+  if (focusedBox) {
+    double maxIoU = 0.0;
+    for (size_t i = 0; i < boxes.size(); ++i) {
+      double iou = computeIoU(boxes[i].bounding_box, *focusedBox);
+      if (iou > maxIoU) {
+        maxIoU = iou;
+        highlightIdx = static_cast<int>(i);
+      }
+    }
+  }
+  for(size_t i = 0; i < boxes.size(); ++i) {
+    const auto &box = boxes[i];
+    std::cout<<"Box coords: "<<box.bounding_box<<"\n";
     std::string label = labels[box.class_id];
     // Draw bounding box
-    cv::rectangle(frame, box.bounding_box, cv::Scalar(0, 255, 0), 2);
+    cv::Scalar color = (static_cast<int>(i) == highlightIdx) ? cv::Scalar(0,0,255) : cv::Scalar(0,255,0); // Red for highlight, green otherwise
+    cv::rectangle(frame, box.bounding_box, color, 2);
     // Draw label background
     int baseLine = 0;
     cv::Size labelSize = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseLine);
     int top = std::max(box.bounding_box.y, labelSize.height);
     cv::rectangle(frame, cv::Point(box.bounding_box.x, top - labelSize.height - 5),
                 cv::Point(box.bounding_box.x + labelSize.width, top + baseLine - 5),
-                cv::Scalar(0, 255, 0), cv::FILLED);
+                color, cv::FILLED);
     // Draw label text with confidence
     char label_text[128];
     snprintf(label_text, sizeof(label_text), "%s: %.2f", label.c_str(), box.confidence);
@@ -270,7 +294,7 @@ int main(){
     cv::cvtColor(image,hsv, cv::COLOR_BGR2HSV);
 
     if(trackedObj){
-      cv::inRange(hsv,cv::Scalar(0,30,10),cv::Scalar(180,256,10),mask);
+      cv::inRange(hsv,cv::Scalar(0,30,10),cv::Scalar(180,256,256),mask);
       int ch[] = {0,0};
       hue.create(hsv.size(), hsv.depth());
       cv::mixChannels(&hsv,1,&hue,1,ch,1);
@@ -284,6 +308,15 @@ int main(){
 
         trackedWindow = selection; 
         trackedObj = 1;
+
+        // After selection is set in onMouse
+        std::cout << "Selection: " << selection << std::endl;
+
+        // After trackedWindow is set
+        std::cout << "TrackedWindow: " << trackedWindow << std::endl;
+
+        // After roi and maskroi are created
+        std::cout << "ROI size: " << roi.size() << ", MaskROI size: " << maskroi.size() << std::endl;
       }
       // Backproject histogram
       calcBackProject(&hue, 1, 0, hist, backproj, &phranges);
@@ -304,21 +337,12 @@ int main(){
 
     cv::Mat raw_boxes = getYoloBox(output);
     std::vector<YoloBoundingBox> filtered_boxes = ProcessYoloOutputs(raw_boxes, frame.size());
-
-    if(trackedObj > 0){
-      std::vector<YoloBoundingBox> focused_boxes;
-      cv::Rect focusedBox = trackedBox.boundingRect();
-      for(const auto &box : filtered_boxes){
-        if(computeIoU(box.bounding_box, focusedBox) > overlapedThreshold){
-          focused_boxes.push_back(box);
-        }
-      }
-      drawing(focused_boxes, frame, labels);
-    } else {
-      drawing(filtered_boxes, frame, labels);
-    }
+    cv::Rect focusedBox = trackedBox.boundingRect();
+    std::cout<<"Here is the focused box wanker: "<<focusedBox<<"\n";
+    std::cout<<"===================================================="<<"\n";
+    // Highlight the YOLO box that most overlaps with the CamShift region
+    drawing(filtered_boxes, frame, labels, &focusedBox);
     cv::imshow("Computer Vision", frame);
-    retangle(frame,trackedBox)
     int key = cv::waitKey(1000 / 120);
     if(key==27){
       break;
