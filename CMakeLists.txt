@@ -8,7 +8,12 @@ link_directories(${ONNXRUNTIME_ROOT}/lib)
 
 find_package(OpenCV REQUIRED)
 
-add_executable(object_detection src/main.cpp)
+set(SOURCES ${CMAKE_SOURCE_DIR}/src/main.cpp 
+        ${CMAKE_SOURCE_DIR}/include/utilities.h
+        ${CMAKE_SOURCE_DIR}/include/types.h)
+
+add_executable(object_detection ${SOURCES})
+target_include_directories(object_detection PRIVATE ${CMAKE_SOURCE_DIR}/include)
 
 target_link_libraries(object_detection PUBLIC onnxruntime ${OpenCV_LIBS} )
 
