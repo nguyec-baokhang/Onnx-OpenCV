@@ -2,7 +2,6 @@
 #include <opencv2/opencv.hpp>
 
 // Munkres helper functions 
-
 void rowReduce(cv::Mat &costMatrix){
   for(int i = 0; i < costMatrix.rows; i++){
     double minVal;
@@ -122,7 +121,7 @@ void min_subtraction(cv::Mat &matrix, const std::vector<std::vector<bool>> &mark
 
   for(int i = 0; i < matrix.rows; i++){
     for(int j = 0; j < matrix.cols; j++){
-      if(!(marked[0][i]) && !(marked[1][j])){
+      if((marked[0][i]) && !(marked[1][j])){
         matrix.at<float>(i,j) -= min_uncovered;
       }
       else if(!(marked[0][i]) && (marked[1][j])){
@@ -154,13 +153,13 @@ namespace Algorithms
     rowReduce(matrix);
     colReduce(matrix);
 
-    mask = mask_assignment(matrix);
-    check = check_requirement(mask);
-    marked = minimal_line_marking(matrix,mask);
+    do{
+      mask = mask_assignment(matrix);
+      check = check_requirement(mask);
+      marked = minimal_line_marking(matrix,mask);
+      min_subtraction(matrix,marked);
+    }while(check);
 
-    min_subtraction(matrix,marked);
-
-  
     return matrix;
   }
 }
