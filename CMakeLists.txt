@@ -9,8 +9,7 @@ link_directories(${ONNXRUNTIME_ROOT}/lib)
 find_package(OpenCV REQUIRED)
 
 set(SOURCES ${CMAKE_SOURCE_DIR}/src/main.cpp 
-        ${CMAKE_SOURCE_DIR}/include/utilities.h
-        ${CMAKE_SOURCE_DIR}/include/types.h)
+        ${CMAKE_SOURCE_DIR}/src/munkres.cpp)
 
 add_executable(object_detection ${SOURCES})
 target_include_directories(object_detection PRIVATE ${CMAKE_SOURCE_DIR}/include)

@@ -1,8 +1,7 @@
-#pragma once 
-#include <opencv2/opencv.hpp>
+#include "munkres.h"
 
 // Munkres helper functions 
-void rowReduce(cv::Mat &costMatrix){
+void Munkres::rowReduce(cv::Mat &costMatrix){
   for(int i = 0; i < costMatrix.rows; i++){
     double minVal;
     cv::minMaxLoc(costMatrix.row(i), &minVal, nullptr);
@@ -10,7 +9,7 @@ void rowReduce(cv::Mat &costMatrix){
   }
 }
 
-void colReduce(cv::Mat &costMatrix){
+void Munkres::colReduce(cv::Mat &costMatrix){
   for(int i = 0; i < costMatrix.cols; i++){
     double minVal;
     cv::minMaxLoc(costMatrix.col(i), &minVal, nullptr);
@@ -18,7 +17,7 @@ void colReduce(cv::Mat &costMatrix){
   }
 }
 
-cv::Mat mask_assignment(cv::Mat &matrix){
+cv::Mat Munkres::mask_assignment(cv::Mat &matrix){
   cv::Mat mask = cv::Mat::zeros(matrix.size(), CV_8U);
   std::vector<bool> row_assigned(matrix.rows, false);
   std::vector<bool> col_assigned(matrix.cols, false);
@@ -37,7 +36,7 @@ cv::Mat mask_assignment(cv::Mat &matrix){
   return mask;
 }
 
-bool check_requirement(cv::Mat mask){
+bool Munkres::check_requirement(cv::Mat mask){
   int n = mask.rows; 
   int assignment_counter{0};
 
@@ -56,7 +55,7 @@ bool check_requirement(cv::Mat mask){
   return false;
 }
 
-std::vector<std::vector<bool>> minimal_line_marking(cv::Mat &matrix, cv::Mat &mask){
+std::vector<std::vector<bool>> Munkres::minimal_line_marking(cv::Mat &matrix, cv::Mat &mask){
   int n = matrix.rows;
   std::vector<std::vector<bool>> marked;
   std::vector<bool> row_marked(n,false);
@@ -104,7 +103,7 @@ std::vector<std::vector<bool>> minimal_line_marking(cv::Mat &matrix, cv::Mat &ma
   return {row_marked, col_marked};
 }
 
-void min_subtraction(cv::Mat &matrix, const std::vector<std::vector<bool>> &marked){
+void Munkres::min_subtraction(cv::Mat &matrix, const std::vector<std::vector<bool>> &marked){
   float min_uncovered = std::numeric_limits<float>::max();
   for(int i = 0; i < matrix.rows; i++){
     if ((marked[0][i])){
@@ -133,33 +132,30 @@ void min_subtraction(cv::Mat &matrix, const std::vector<std::vector<bool>> &mark
   std::cout << matrix << "\n";
 }
 
-namespace Algorithms
-{
-  cv::Mat Munkres(cv::Mat &matrix){
-    bool check;
-    cv::Mat mask;
-    std::vector<std::vector<bool>> marked;
+// Logic
 
-    if(matrix.empty()){
+void Munkres::matrix_check(cv::Mat &matrix){
+  if(matrix.empty()){
       throw std::invalid_argument("The matrix is empty");
     }
-    if(matrix.rows != matrix.cols){
-      int n = std::max(matrix.rows,matrix.cols);
-      cv::Mat squareMat = cv::Mat::zeros(n,n,matrix.type());
-      matrix.copyTo(squareMat(cv::Rect(0, 0, matrix.cols, matrix.rows)));
-      matrix = squareMat;
-    }
-
-    rowReduce(matrix);
-    colReduce(matrix);
-
-    do{
-      mask = mask_assignment(matrix);
-      check = check_requirement(mask);
-      marked = minimal_line_marking(matrix,mask);
-      min_subtraction(matrix,marked);
-    }while(check);
-
-    return matrix;
+  if(matrix.rows != matrix.cols){
+    int n = std::max(matrix.rows,matrix.cols);
+    cv::Mat squareMat = cv::Mat::zeros(n,n,matrix.type());
+    matrix.copyTo(squareMat(cv::Rect(0, 0, matrix.cols, matrix.rows)));
+    matrix = squareMat;
   }
+}
+
+cv::Mat Munkres::main_loop(cv::Mat &matrix){
+  rowReduce(matrix);
+  colReduce(matrix);
+
+  do{
+    mask = mask_assignment(matrix);
+    check = check_requirement(mask);
+    marked = minimal_line_marking(matrix,mask);
+    min_subtraction(matrix,marked);
+  }while(check);
+
+  return matrix;
 }
