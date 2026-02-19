@@ -6,3 +6,10 @@ struct YoloBoundingBox{
   double confidence;
   int class_id;
 };
+
+struct TrackingBox
+{
+	int frame;
+	int id;
+	cv::Rect_<float> box;
+};

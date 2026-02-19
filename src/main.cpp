@@ -1,8 +1,12 @@
 #include <onnxruntime_cxx_api.h>
 #include <opencv2/opencv.hpp>
 #include <fstream> 
+#include <deque>
+#include <unordered_map>
 
 #include "utilities.h"
+#include "types.h"
+#include "Sort.h"
 
 
 int main(){
@@ -31,6 +35,10 @@ int main(){
 
   std::vector<std::string> labels = Utilities::LoadLabels(labelsPath);
 
+  SORT sort_tracker;
+  std::unordered_map<int, std::deque<cv::Point>> track_history;
+  const size_t max_history = 30;
+
   cv::namedWindow("Computer Vision");
   while(true){
     video >> frame; 
@@ -51,8 +59,8 @@ int main(){
 
     cv::Mat raw_boxes = Utilities::getYoloBox(output);
     std::vector<YoloBoundingBox> filtered_boxes = Utilities::ProcessYoloOutputs(raw_boxes, frame.size());
-    // Highlight the YOLO box that most overlaps with the CamShift region
-    Utilities::drawing(filtered_boxes, frame, labels);
+    std::vector<TrackingBox> tracks = sort_tracker.update(filtered_boxes);
+    Utilities::DrawTracks(frame, tracks, track_history, max_history, filtered_boxes, labels);
     cv::imshow("Computer Vision", frame);
     int key = cv::waitKey(1000 / 120);
     if(key==27){

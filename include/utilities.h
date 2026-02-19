@@ -1,6 +1,9 @@
 #pragma once 
 #include "types.h"
 
+#include <deque>
+#include <unordered_map>
+
 namespace Utilities{
   Ort::Session LoadYoloModel(const Ort::Env &env, const std::string &modelPath){
     Ort::SessionOptions yoloSessionOption;
@@ -165,28 +168,55 @@ double computeIoU(const cv::Rect &a, const cv::Rect &b) {
     return unionArea > 0 ? static_cast<double>(intersectionArea) / unionArea : 0.0;
 }
 
-void drawing(const std::vector<YoloBoundingBox> &boxes, cv::Mat &frame, const std::vector<std::string> &labels){
-  cv::Scalar color;
+std::string ResolveTrackLabel(const TrackingBox &track,
+                              const std::vector<YoloBoundingBox> &detections,
+                              const std::vector<std::string> &labels) {
+  double best_iou = 0.0;
+  int best_idx = -1;
+  for (size_t i = 0; i < detections.size(); ++i) {
+    const double iou = computeIoU(cv::Rect(track.box), detections[i].bounding_box);
+    if (iou > best_iou) {
+      best_iou = iou;
+      best_idx = static_cast<int>(i);
+    }
+  }
+  if (best_idx >= 0 && best_idx < static_cast<int>(labels.size())) {
+    return labels[detections[best_idx].class_id];
+  }
+  return "";
+}
 
-  for(size_t i = 0; i < boxes.size(); ++i) {
-    const auto &box = boxes[i];
-    std::cout<<"Box coords: "<<box.bounding_box<<"\n";
-    std::string label = labels[box.class_id];
-    // Draw bounding box
-    color = cv::Scalar(0,255,0);
-    cv::rectangle(frame, box.bounding_box, color, 2);
-    // Draw label background
-    int baseLine = 0;
-    cv::Size labelSize = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseLine);
-    int top = std::max(box.bounding_box.y, labelSize.height);
-    cv::rectangle(frame, cv::Point(box.bounding_box.x, top - labelSize.height - 5),
-                cv::Point(box.bounding_box.x + labelSize.width, top + baseLine - 5),
-                color, cv::FILLED);
-    // Draw label text with confidence
-    char label_text[128];
-    snprintf(label_text, sizeof(label_text), "%s: %.2f", label.c_str(), box.confidence);
-    cv::putText(frame, label_text, cv::Point(box.bounding_box.x, top - 2),
-                cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0,0,0), 1);
+void DrawTracks(cv::Mat &frame,
+                const std::vector<TrackingBox> &tracks,
+                std::unordered_map<int, std::deque<cv::Point>> &track_history,
+                size_t max_history,
+                const std::vector<YoloBoundingBox> &detections,
+                const std::vector<std::string> &labels) {
+  for (const auto &track : tracks) {
+    const cv::Rect_<float> box = track.box;
+    const cv::Point center(static_cast<int>(box.x + box.width / 2.0f),
+                           static_cast<int>(box.y + box.height / 2.0f));
+
+    auto &history = track_history[track.id];
+    history.push_back(center);
+    if (history.size() > max_history) {
+      history.pop_front();
+    }
+
+    const cv::Scalar color((track.id * 37) % 255, (track.id * 17) % 255, (track.id * 29) % 255);
+    cv::rectangle(frame, box, color, 2);
+
+    for (size_t i = 1; i < history.size(); ++i) {
+      cv::line(frame, history[i - 1], history[i], color, 2);
+    }
+
+    const std::string label = ResolveTrackLabel(track, detections, labels);
+    std::string id_label = "ID " + std::to_string(track.id);
+    if (!label.empty()) {
+      id_label += " " + label;
+    }
+    cv::putText(frame, id_label, cv::Point(static_cast<int>(box.x), static_cast<int>(box.y) - 5),
+                cv::FONT_HERSHEY_SIMPLEX, 0.5, color, 2);
   }
 }
 }

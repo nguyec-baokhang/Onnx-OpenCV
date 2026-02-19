@@ -9,8 +9,9 @@ link_directories(${ONNXRUNTIME_ROOT}/lib)
 find_package(OpenCV REQUIRED)
 
 set(SOURCES ${CMAKE_SOURCE_DIR}/src/main.cpp 
-        ${CMAKE_SOURCE_DIR}/src/munkres.cpp
-        ${CMAKE_SOURCE_DIR}/src/kalman_filter.cpp)
+        ${CMAKE_SOURCE_DIR}/src/Hungarian.cpp
+        ${CMAKE_SOURCE_DIR}/src/KalmanTracker.cpp
+        ${CMAKE_SOURCE_DIR}/src/SORT.cpp)
 
 add_executable(object_detection ${SOURCES})
 target_include_directories(object_detection PRIVATE ${CMAKE_SOURCE_DIR}/include)
